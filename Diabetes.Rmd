@@ -1,0 +1,248 @@
+---
+title: "Final Project -473"
+author: "Thu Tran"
+date: "2023-11-29"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r}
+# LOAD LIBRARY
+library(tidyverse)
+library(pacman)
+library(dplyr)
+library(boot)
+p_load(NSM3,Rfit)
+p_load(gamair, mgcv)
+```
+# 1. LOAD DATA
+```{r}
+
+diabetes<- read.csv("diabetes.csv")
+glimpse(diabetes)
+```
+
+# 2. EXPLORATORY DATA ANALYSIS (EDA):
+```{r}
+#Summary table
+library(skimr)
+library(gt)
+skim_tb<-skim(diabetes)
+skim_tb
+
+diabetes_summary<-data.frame(
+  Type=skim_tb$skim_type,
+  Variables=skim_tb$skim_variable,
+  Missing=skim_tb$n_missing,
+  Min=skim_tb$numeric.p0,
+  Mean=skim_tb$numeric.mean,
+  Median=skim_tb$numeric.p50,
+  Max=skim_tb$numeric.p100,
+  SD=skim_tb$numeric.sd
+)
+gt(diabetes_summary)%>%
+  tab_header(
+    title = "STATISTICAL SUMMARY TABLE"
+  )
+```
+```{r, fig.width=3,fig.height=4}
+# Outcome distribution
+outcome=ifelse(diabetes$Outcome==0,"Negative","Possitive")
+outcome=as.factor(outcome)
+plot(outcome,col=c("lightblue","red"), main= "Histogram of the Outcome")
+```
+
+```{r}
+# Correlation Heatmap
+library(corrplot)
+corr_matrix<-cor(diabetes)
+corrplot(corr_matrix, method="color")
+```
+According to the heatmap about the correlation among variables, we can clearly identify the top 5 common factors that has the high correlation is Glucose, BMI,Age,Prenancies,and DiabetesPredigreeFunction (DPF)
+
+
+```{r}
+# Side-by-side boxplot by "Outcome"
+par(mfrow=c(2,4))
+boxplot(Pregnancies~Outcome,data=diabetes, col= c("lightblue","red"),main = "Pregnancies")
+boxplot(Glucose~Outcome,data=diabetes, col= c("lightblue","red"),main = "Glucose")
+boxplot(BloodPressure~Outcome,data=diabetes, col= c("lightblue","red"),main = "BloodPressure")
+boxplot(SkinThickness~Outcome,data=diabetes, col= c("lightblue","red"),main = "SkinThickness")
+boxplot(Insulin~Outcome,data=diabetes, col= c("lightblue","red"),main = "Insulin")
+boxplot(BMI~Outcome,data=diabetes, col= c("lightblue","red"),main = "BMI")
+boxplot(DiabetesPedigreeFunction~Outcome,data=diabetes, col= c("lightblue","red"),main = "DPF")
+boxplot(Age~Outcome,data=diabetes, col= c("lightblue","red"),main = "Age")
+```
+CONCLUSION:
+Diabetic patient seems to have a higher mean index in almost all variables except the Insulin. For insulin, the mean Negative and positive seems similar.
+
+# 3.DATA ANALYSIS
+## 3.1 Variable selection
+###  a. Wilcoxson rank sum test
+```{r,warning=FALSE}
+var=skim_tb$skim_variable[1:8]
+p<-c()
+l<-c()
+u<-c()
+r<-c()
+for(i in var){
+  cat("\nHYPOTHESIS TEST -",i,":\n",
+      "Null hypothesis:",i,"doesn't affect the diabetes outcome.\n",
+      "Alternate hypothesis:",i," has affect the diabetes outcome\n")
+  var_0<-diabetes[[i]][diabetes$Outcome==0]
+  var_1<-diabetes[[i]][diabetes$Outcome==1]
+  re<-wilcox.test(var_1,var_0,exact=F,conf.int = TRUE)
+  print(re)
+  p_value=re$p.value
+  low=re$conf.int[1]
+  up=re$conf.int[2]
+  p<-append(p,p_value)
+  l<-append(l,low)
+  u<-append(u,up)
+  if (p_value > 0.05) {
+    re<-c("No affect outcome")
+    r<-append(r,re)
+    cat("CONCLUSION:\nThe p_value of the Wilcoxson rank test is more than 0.005, we fail reject the null hypothesis.",i,"doesn't affect the diabetes outcome.\nFrom the 95% confident interval of the",i,"effect,the different between non-diabetic and diabetic patient is from",low,"to",up,".Since the interval contains zero, it agrees that",i," doesn't affect on diabetes outcome.\n\n\n")
+  }else{
+    re<-c("Affect outcome")
+    r<-append(r,re)
+    cat("CONCLUSION:\nThe p_value of the Wilcoxson rank test is less than 0.005, we can reject the null hypothesis.",
+        i,"has affect the diabetes outcome.\nFrom the 95% confident interval of the",i,"effect,the different between non-diabetic and diabetic patient is from",low,"to",up,".Since the interval doesn't contain zero, it agrees that",i,"has possitive affect on diabetes outcome.\n\n\n")
+  }
+    
+}
+```
+**According to the Wilcoxson rank test of all variables, Insulin doesn't have a clear effect on the Diabetes outcome, Consequently, this variable has been excluded from the predictive model.**
+  
+```{r}
+wilcox_tb<-data.frame(Variables=var,
+                      P_value=p,
+                      Lower_95CI=l,
+                      Upper_95CI=u,
+                      Result=r)
+gt(wilcox_tb) %>%
+  tab_header(
+    title = "WILCOXSON TEST SUMMARY TABLE"
+  )
+```
+
+###  b. Ranking variables (Spearman)
+```{r}
+#RANKING VARIABLES
+
+# Load necessary libraries
+library(dplyr)
+
+# Calculate Spearman rank correlation coefficients
+cor_matrix <- diabetes %>% cor(method = "spearman")
+
+# Extract the correlation coefficients for the Outcome variable
+cor_with_outcome <- cor_matrix[, "Outcome"]
+
+# Rank variables based on absolute correlation coefficients
+ranked_variables <- sort(abs(cor_with_outcome), decreasing = TRUE)
+
+# Print the ranked variables
+print(ranked_variables)
+
+# MODEL SELECTIONS
+
+```
+
+### c.c.	Choosing variables:(drop.test)
+
+```{r,warning=FALSE}
+# Variables selection
+full<-rfit(Outcome ~., data=diabetes)
+model1<-rfit(Outcome~.-Insulin,data=diabetes)
+model2<-rfit(Outcome~.-Insulin-SkinThickness,data=diabetes)
+model3<-rfit(Outcome~.-Insulin-SkinThickness-BloodPressure,data=diabetes)
+model4<-rfit(Outcome~.-Insulin-SkinThickness-BloodPressure-DiabetesPedigreeFunction,data=diabetes)
+drop.test(full,model1)
+drop.test(full,model2)
+drop.test(full,model3)
+drop.test(full,model4)
+
+```
+Using the table 4 as the reference to choose variables to drop down in regression model, the drop test shows that we can just drop the Insulin and the SkinThickness. The final variables we choose to predict the Outcome are Pregnancies, Glucose, BloodPressure, BMI, DiabetesPedigreeFunction and Age
+
+
+
+
+
+
+
+
+
+
+
+## 3.2 Model Selection
+```{r}
+# Data Spliting
+set.seed(123)
+n <- nrow(diabetes)
+train_index <- sample(1:n, round(0.95*n))
+train<- diabetes[train_index, ]
+test <- diabetes[-train_index, ]
+```
+
+```{r}
+# Fitting in different model
+# Fit in linear regression
+data.lm<-lm(Outcome~Pregnancies+Glucose+BloodPressure+BMI+DiabetesPedigreeFunction+Age,data=train)
+# Fit in logistic regression
+data.glm<-glm(Outcome~Pregnancies+Glucose+BloodPressure+BMI+DiabetesPedigreeFunction+Age,family=binomial,data=train)
+# Fit in GAM
+data.gam<-gam(Outcome~s(Pregnancies)+s(Glucose)+s(BloodPressure)+s(BMI)+s(DiabetesPedigreeFunction)+s(Age),data=train)
+# Fit in GAM(log)
+data.lgam<-gam(Outcome~s(Pregnancies)+s(Glucose)+s(BloodPressure)+s(BMI)+s(DiabetesPedigreeFunction)+s(Age),family=binomial,data=train)
+
+```
+```{r}
+# Make prediction
+pred_lm<-predict(data.lm, newdata =test)
+pred_glm <- predict(data.glm, newdata =test)
+pred_gam<- predict(data.gam, newdata =test)
+pred_lgam<- predict(data.lgam, newdata =test)
+
+# RMSE and Rˆ2
+rmse_score <- function(y, y_hat) { sqrt(mean((y - y_hat)^2))}
+
+# AIC score
+score <-AIC(data.lm,data.glm,data.gam,data.lgam)
+
+# Metrics summary table
+RMSE<- c(rmse_score(test$Outcome,pred_lm),rmse_score(test$Outcome,pred_glm),
+         rmse_score(test$Outcome,pred_gam),rmse_score(test$Outcome,pred_lgam))
+R_2<- c(cor(test$Outcome,pred_lm)^2,cor(test$Outcome,pred_glm)^2,
+       cor(test$Outcome,pred_gam)^2,cor(test$Outcome,pred_lgam)^2)
+AIC_<-c(score$AIC[1],score$AIC[2],score$AIC[3],score$AIC[4])
+Model<- c("Multiple Linear model","Multiple Logistic model","GAM model","Logistic GAM model")
+predict_tb<-data.frame(Model,RMSE,R_2,AIC_)
+
+gt(predict_tb) %>%
+  tab_header(
+    title = "METRICS SUMMARY TABLE"
+  )
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
